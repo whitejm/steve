@@ -8,30 +8,30 @@ from tools.tool import Tool, tool
 
 # Parameter models for goal operations
 class CreateGoalParams(BaseModel):
-    name: str = Field(description="Goal identifier in dot notation (e.g., 'health.run_5k')")
-    short_description: str = Field(description="Brief summary of the goal")
-    long_description: str = Field(description="Detailed explanation of the goal")
-    state: Optional[GoalState] = Field(default=GoalState.ACTIVE, description="Goal state")
+    name: str = Field(description=Goal.model_fields["name"].description)
+    short_description: str = Field(description=Goal.model_fields["short_description"].description)
+    long_description: str = Field(description=Goal.model_fields["long_description"].description)
+    # Removed state from the parameters as it should always default to ACTIVE
 
 
 class UpdateGoalParams(BaseModel):
-    name: str = Field(description="Goal identifier to update")
-    short_description: Optional[str] = Field(default=None, description="Updated brief summary")
-    long_description: Optional[str] = Field(default=None, description="Updated detailed explanation")
-    state: Optional[GoalState] = Field(default=None, description="Updated goal state")
+    name: str = Field(description=Goal.model_fields["name"].description)
+    short_description: Optional[str] = Field(default=None, description=Goal.model_fields["short_description"].description)
+    long_description: Optional[str] = Field(default=None, description=Goal.model_fields["long_description"].description)
+    state: Optional[GoalState] = Field(default=None, description=Goal.model_fields["state"].description)
 
 
 class GetGoalParams(BaseModel):
-    name: str = Field(description="Goal identifier to retrieve")
+    name: str = Field(description=Goal.model_fields["name"].description)
 
 
 class ListGoalsParams(BaseModel):
-    state: Optional[GoalState] = Field(default=None, description="Filter goals by state")
+    state: Optional[GoalState] = Field(default=None, description=Goal.model_fields["state"].description)
     parent_prefix: Optional[str] = Field(default=None, description="Filter goals by parent prefix (e.g., 'health')")
 
 
 class DeleteGoalParams(BaseModel):
-    name: str = Field(description="Goal identifier to delete")
+    name: str = Field(description=Goal.model_fields["name"].description)
 
 
 # Create the storage instance for goals
@@ -40,13 +40,13 @@ goal_store = JsonStore(Goal, "data/goals.json")
 
 # Tool functions
 @tool(parameter_model=CreateGoalParams)
-def create_goal(name: str, short_description: str, long_description: str, state: GoalState = GoalState.ACTIVE) -> Goal:
+def create_goal(name: str, short_description: str, long_description: str) -> Goal:
     """Create a new goal"""
     goal = Goal(
         name=name,
         short_description=short_description,
         long_description=long_description,
-        state=state
+        state=GoalState.ACTIVE  # Always set to ACTIVE by default
     )
     return goal_store.create(goal)
 
