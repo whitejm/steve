@@ -56,10 +56,11 @@ def create_subset_model(
             "description": original_field.description,
         }
         
-        # Add default if it exists and field isn't being made optional
-        if not (field_name in make_optional) and original_field.default is not Ellipsis:
+        # FIXED: Preserve original default values even for optional fields
+        if original_field.default is not Ellipsis:
             field_params["default"] = original_field.default
         elif field_name in make_optional:
+            # Only set to None if there was no default and it's optional
             field_params["default"] = None
             
         # Apply any overrides for this field

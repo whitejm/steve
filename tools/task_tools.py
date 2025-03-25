@@ -6,6 +6,7 @@ from models import Task, TaskState
 from storage import JsonStore
 from tools.tool import Tool, tool
 from tools.model_utils import create_subset_model
+from tools.goal_tools import goal_store  # Import goal_store to validate goals
 
 
 # Parameter models for task operations using the model_utils helper
@@ -14,7 +15,7 @@ CreateTaskParams = create_subset_model(
     ["id", "name", "estimated_completion_time", "goals", "state", "schedule_on_or_after", 
      "due_by", "depends_on", "can_complete_late", "log_instructions"],
     model_name="CreateTaskParams",
-    make_optional=["state", "schedule_on_or_after", "due_by", "depends_on", 
+    make_optional=["goals", "state", "schedule_on_or_after", "due_by", "depends_on", 
                   "can_complete_late", "log_instructions"]
 )
 
@@ -60,11 +61,27 @@ task_store = JsonStore(Task, "data/tasks.json")
 
 # Tool functions
 @tool(parameter_model=CreateTaskParams)
-def create_task(id: str, name: str, estimated_completion_time: int, goals: List[str],
-                state: TaskState = TaskState.INCOMPLETE, schedule_on_or_after: Optional[datetime] = None,
-                due_by: Optional[datetime] = None, depends_on: Optional[List[str]] = None,
-                can_complete_late: bool = True, log_instructions: Optional[str] = None) -> Task:
+def create_task(id: str, name: str, estimated_completion_time: int, 
+                goals: Optional[List[str]] = None,
+                state: TaskState = TaskState.INCOMPLETE, 
+                schedule_on_or_after: Optional[datetime] = None,
+                due_by: Optional[datetime] = None, 
+                depends_on: Optional[List[str]] = None,
+                can_complete_late: bool = True, 
+                log_instructions: Optional[str] = None) -> Task:
     """Create a new task"""
+    # Initialize goals to empty list if None
+    if goals is None:
+        goals = []
+    
+    # Validate that all specified goals exist
+    if goals:
+        existing_goals = {goal.name for goal in goal_store.get_all()}
+        non_existent_goals = [goal for goal in goals if goal not in existing_goals]
+        
+        if non_existent_goals:
+            raise ValueError(f"The following goals do not exist: {', '.join(non_existent_goals)}")
+    
     task = Task(
         id=id,
         name=name,
@@ -90,6 +107,14 @@ def update_task(id: str, name: Optional[str] = None, state: Optional[TaskState] 
     existing_task = task_store.get_by_id(id)
     if not existing_task:
         return None
+    
+    # Validate that all specified goals exist if goals are being updated
+    if goals is not None:
+        existing_goals = {goal.name for goal in goal_store.get_all()}
+        non_existent_goals = [goal for goal in goals if goal not in existing_goals]
+        
+        if non_existent_goals:
+            raise ValueError(f"The following goals do not exist: {', '.join(non_existent_goals)}")
     
     # Update only provided fields
     updated_data = existing_task.model_dump()

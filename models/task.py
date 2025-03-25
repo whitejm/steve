@@ -22,7 +22,7 @@ class RecurringTaskTemplate(BaseModel):
         description="Estimated time required to complete each instance of this task, in minutes"
     )
     goals: List[str] = Field(
-        description="References to Goal entities this recurring task contributes toward"
+        description="References to Goal entities this recurring task contributes toward (must be provided as a list/array, even for a single goal)"
     )
     rrule: str = Field(
         description="Recurrence rule for generating recurring instances of this task"
@@ -64,7 +64,7 @@ class Task(BaseModel):
         description="Actual time taken to complete the task, in minutes"
     )
     goals: List[str] = Field(
-        description="References to Goal entities this task contributes toward"
+        description="References to Goal entities this recurring task contributes toward (must be provided as a list/array, even for a single goal)"
     )
     depends_on: Optional[List[str]] = Field(
         default=None,
