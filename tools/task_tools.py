@@ -1,59 +1,57 @@
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from models import Task, TaskState
 from storage import JsonStore
 from tools.tool import Tool, tool
+from tools.model_utils import create_subset_model
 
 
-# Parameter models for task operations
-class CreateTaskParams(BaseModel):
-    id: str = Field(description="Unique identifier for the task")
-    name: str = Field(description="Short descriptive title of the task")
-    estimated_completion_time: int = Field(description="Estimated completion time in minutes")
-    goals: List[str] = Field(description="List of goal identifiers this task contributes to")
-    state: Optional[TaskState] = Field(default=TaskState.INCOMPLETE, description="Task state")
-    schedule_on_or_after: Optional[datetime] = Field(default=None, description="Earliest date to schedule")
-    due_by: Optional[datetime] = Field(default=None, description="Task deadline")
-    depends_on: Optional[List[str]] = Field(default=None, description="IDs of prerequisite tasks")
-    can_complete_late: Optional[bool] = Field(default=True, description="Allow completion after due date")
-    log_instructions: Optional[str] = Field(default=None, description="Guidelines for task logging")
+# Parameter models for task operations using the model_utils helper
+CreateTaskParams = create_subset_model(
+    Task,
+    ["id", "name", "estimated_completion_time", "goals", "state", "schedule_on_or_after", 
+     "due_by", "depends_on", "can_complete_late", "log_instructions"],
+    model_name="CreateTaskParams",
+    make_optional=["state", "schedule_on_or_after", "due_by", "depends_on", 
+                  "can_complete_late", "log_instructions"]
+)
 
-
-class UpdateTaskParams(BaseModel):
-    id: str = Field(description="Task ID to update")
-    name: Optional[str] = Field(default=None, description="Updated task title")
-    state: Optional[TaskState] = Field(default=None, description="Updated task state")
-    estimated_completion_time: Optional[int] = Field(default=None, description="Updated time estimate")
-    actual_completion_time: Optional[int] = Field(default=None, description="Actual completion time")
-    goals: Optional[List[str]] = Field(default=None, description="Updated goal references")
-    schedule_on_or_after: Optional[datetime] = Field(default=None, description="Updated earliest schedule date")
-    due_by: Optional[datetime] = Field(default=None, description="Updated deadline")
-    depends_on: Optional[List[str]] = Field(default=None, description="Updated prerequisites")
-    log: Optional[Dict[str, Any]] = Field(default=None, description="Task progress log")
-
+UpdateTaskParams = create_subset_model(
+    Task, 
+    ["id", "name", "state", "estimated_completion_time", "actual_completion_time", 
+     "goals", "schedule_on_or_after", "due_by", "depends_on", "log"],
+    model_name="UpdateTaskParams",
+    make_optional=["name", "state", "estimated_completion_time", "actual_completion_time", 
+                  "goals", "schedule_on_or_after", "due_by", "depends_on", "log"]
+)
 
 class GetTaskParams(BaseModel):
-    id: str = Field(description="Task ID to retrieve")
+    id: str = Field(description=Task.model_fields["id"].description)
 
 
 class ListTasksParams(BaseModel):
-    state: Optional[TaskState] = Field(default=None, description="Filter by task state")
-    goal: Optional[str] = Field(default=None, description="Filter by associated goal")
-    due_before: Optional[datetime] = Field(default=None, description="Filter by due date before")
-    due_after: Optional[datetime] = Field(default=None, description="Filter by due date after")
-    template_id: Optional[str] = Field(default=None, description="Filter by template ID")
+    state: Optional[TaskState] = None
+    goal: Optional[str] = None
+    due_before: Optional[datetime] = None
+    due_after: Optional[datetime] = None
+    template_id: Optional[str] = None
+    
+    class Config:
+        arbitrary_types_allowed = True
 
 
 class DeleteTaskParams(BaseModel):
-    id: str = Field(description="Task ID to delete")
+    id: str = Field(description=Task.model_fields["id"].description)
 
 
-class CompleteTaskParams(BaseModel):
-    id: str = Field(description="Task ID to mark as complete")
-    actual_completion_time: Optional[int] = Field(default=None, description="Actual time taken in minutes")
-    log_data: Optional[Dict[str, Any]] = Field(default=None, description="Completion log data")
+CompleteTaskParams = create_model(
+    "CompleteTaskParams",
+    id=(str, Field(description="Task ID to mark as complete")),
+    actual_completion_time=(Optional[int], Field(default=None, description="Actual time taken in minutes")),
+    log_data=(Optional[Dict[str, Any]], Field(default=None, description="Completion log data"))
+)
 
 
 # Create the storage instance for tasks

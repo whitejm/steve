@@ -4,31 +4,32 @@ from pydantic import BaseModel, Field
 from models import Goal, GoalState
 from storage import JsonStore
 from tools.tool import Tool, tool
+from tools.model_utils import create_subset_model
 
 
-# Parameter models for goal operations
-class CreateGoalParams(BaseModel):
-    name: str = Field(description=Goal.model_fields["name"].description)
-    short_description: str = Field(description=Goal.model_fields["short_description"].description)
-    long_description: str = Field(description=Goal.model_fields["long_description"].description)
-    # Removed state from the parameters as it should always default to ACTIVE
+# Parameter models for goal operations using the model_utils helper
+CreateGoalParams = create_subset_model(
+    Goal,
+    ["name", "short_description", "long_description"],
+    model_name="CreateGoalParams"
+)
 
-
-class UpdateGoalParams(BaseModel):
-    name: str = Field(description=Goal.model_fields["name"].description)
-    short_description: Optional[str] = Field(default=None, description=Goal.model_fields["short_description"].description)
-    long_description: Optional[str] = Field(default=None, description=Goal.model_fields["long_description"].description)
-    state: Optional[GoalState] = Field(default=None, description=Goal.model_fields["state"].description)
-
+UpdateGoalParams = create_subset_model(
+    Goal,
+    ["name", "short_description", "long_description", "state"],
+    model_name="UpdateGoalParams",
+    make_optional=["short_description", "long_description", "state"]
+)
 
 class GetGoalParams(BaseModel):
     name: str = Field(description=Goal.model_fields["name"].description)
 
-
 class ListGoalsParams(BaseModel):
-    state: Optional[GoalState] = Field(default=None, description=Goal.model_fields["state"].description)
-    parent_prefix: Optional[str] = Field(default=None, description="Filter goals by parent prefix (e.g., 'health')")
-
+    state: Optional[GoalState] = None
+    parent_prefix: Optional[str] = Field(
+        default=None, 
+        description="Filter goals by parent prefix (e.g., 'health')"
+    )
 
 class DeleteGoalParams(BaseModel):
     name: str = Field(description=Goal.model_fields["name"].description)

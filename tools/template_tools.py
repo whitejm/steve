@@ -8,45 +8,37 @@ from dateutil.tz import tzlocal
 from models import RecurringTaskTemplate, Task, TaskState
 from storage import JsonStore
 from tools.tool import Tool, tool
+from tools.model_utils import create_subset_model
 
 
-# Parameter models for template operations
-class CreateTemplateParams(BaseModel):
-    id: Optional[str] = Field(default=None, description="Unique identifier (generated if not provided)")
-    name: str = Field(description="Short descriptive title of the recurring task")
-    estimated_completion_time: int = Field(description="Estimated completion time in minutes")
-    goals: List[str] = Field(description="List of goal identifiers this task contributes to")
-    rrule: str = Field(description="Recurrence rule in iCalendar format")
-    can_complete_late: Optional[bool] = Field(default=True, description="Allow completion after due date")
-    log_instructions: Optional[str] = Field(default=None, description="Guidelines for task logging")
+# Parameter models for template operations using the model_utils helper
+CreateTemplateParams = create_subset_model(
+    RecurringTaskTemplate,
+    ["id", "name", "estimated_completion_time", "goals", "rrule", "can_complete_late", "log_instructions"],
+    model_name="CreateTemplateParams",
+    make_optional=["id", "can_complete_late", "log_instructions"]
+)
 
-
-class UpdateTemplateParams(BaseModel):
-    id: str = Field(description="Template ID to update")
-    name: Optional[str] = Field(default=None, description="Updated template title")
-    estimated_completion_time: Optional[int] = Field(default=None, description="Updated time estimate")
-    goals: Optional[List[str]] = Field(default=None, description="Updated goal references")
-    rrule: Optional[str] = Field(default=None, description="Updated recurrence rule")
-    can_complete_late: Optional[bool] = Field(default=None, description="Updated completion allowance")
-    log_instructions: Optional[str] = Field(default=None, description="Updated logging instructions")
-
+UpdateTemplateParams = create_subset_model(
+    RecurringTaskTemplate,
+    ["id", "name", "estimated_completion_time", "goals", "rrule", "can_complete_late", "log_instructions"],
+    model_name="UpdateTemplateParams",
+    make_optional=["name", "estimated_completion_time", "goals", "rrule", "can_complete_late", "log_instructions"]
+)
 
 class GetTemplateParams(BaseModel):
-    id: str = Field(description="Template ID to retrieve")
-
+    id: str = Field(description=RecurringTaskTemplate.model_fields["id"].description)
 
 class ListTemplatesParams(BaseModel):
-    goal: Optional[str] = Field(default=None, description="Filter by associated goal")
-
+    goal: Optional[str] = None
 
 class DeleteTemplateParams(BaseModel):
-    id: str = Field(description="Template ID to delete")
-
+    id: str = Field(description=RecurringTaskTemplate.model_fields["id"].description)
 
 class GenerateTasksParams(BaseModel):
-    template_id: str = Field(description="Template ID to generate tasks from")
-    start_date: datetime = Field(description="Start date for task generation")
-    end_date: datetime = Field(description="End date for task generation")
+    template_id: str
+    start_date: datetime
+    end_date: datetime
 
 
 # Create storage instances
