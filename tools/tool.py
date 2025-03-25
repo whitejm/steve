@@ -58,12 +58,15 @@ class Tool:
             }
         
         return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": {
-                "type": "object",
-                "properties": fields,
-                "required": self._get_required_fields()
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": fields,
+                    "required": self._get_required_fields()
+                }
             }
         }
     
