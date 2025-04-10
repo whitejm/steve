@@ -2,10 +2,14 @@ import os
 import json
 from typing import Dict, Any, List
 from dotenv import load_dotenv
-import litellm
-from litellm import acompletion
+import asyncio
+import uuid
+
+# Import our poly_completion instead of litellm
+from poly_completion import completion
 
 from tools import toolset
+from database import create_db_and_tables
 
 
 # ANSI color codes for CLI output formatting
@@ -25,15 +29,15 @@ def load_config():
     load_dotenv()
     
     # Get API key
-    api_key = os.getenv("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not found in environment variables")
+    deepinfra_api_key = os.getenv("DEEPINFRA_API_KEY")
+    if not deepinfra_api_key:
+        raise ValueError("DEEPINFRA_API_KEY not found in environment variables")
     
-    # LiteLLM configuration
-    model = "groq/llama-3.3-70b-versatile"
+    # Model configuration
+    model = "deepinfra/google/gemma-3-27b-it"
     
     return {
-        "api_key": api_key,
+        "api_key": deepinfra_api_key,
         "model": model
     }
 
@@ -46,8 +50,9 @@ async def send_message(messages: List[Dict[str, Any]], tools_enabled=True) -> Di
     tools = toolset.get_descriptions() if tools_enabled else None
     tool_choice = "auto" if tools_enabled else "none"
     
-    # Call the LLM
-    response = await acompletion(
+    # Call the LLM using poly_completion instead of litellm directly
+    response = await asyncio.to_thread(
+        completion,
         model=config["model"],
         messages=messages,
         tools=tools,
@@ -90,7 +95,14 @@ def print_formatted_tool_call(tool_call: Dict[str, Any]):
 
 def print_formatted_tool_result(tool_name: str, result: Any):
     """Print a formatted representation of a tool result with colors"""
-    result_str = json.dumps(result, default=str, indent=2)
+    # Handle SQLModel objects for JSON serialization
+    if hasattr(result, "model_dump"):
+        result_dict = result.model_dump()
+    else:
+        # Convert to dict using SQLModel's dict() method if available
+        result_dict = result.dict() if hasattr(result, "dict") else result
+        
+    result_str = json.dumps(result_dict, default=str, indent=2)
     print(f"{Colors.BOLD}{Colors.GREEN}[TOOL RESULT] {tool_name}{Colors.RESET}")
     
     # Format the result with indentation and color
@@ -103,6 +115,9 @@ async def chat_loop():
     print(f"{Colors.BOLD}Welcome to the AI Task & Goal Tracker!{Colors.RESET}")
     print("Type 'quit' or 'exit' to end the session.")
     print()
+    
+    # Initialize the database
+    create_db_and_tables()
     
     # Initialize conversation history with current date and time info
     from datetime import datetime
@@ -118,15 +133,15 @@ async def chat_loop():
         "You can help users manage their tasks and goals, create recurring tasks, and track their progress.\n\n"
         
         "TOOL USAGE GUIDELINES:\n"
-        "1. Use READ-ONLY tools (list_goals, list_tasks, get_goal, get_task, list_templates, get_template) freely to retrieve information and be helpful.\n"
-        "2. For tools that MODIFY data (create_*, update_*, delete_*, complete_task, generate_tasks), ASK FOR CONFIRMATION before executing unless the user explicitly requested the action.\n"
+        "1. Use READ-ONLY tools (list_goals, list_tasks, get_goal, get_task) freely to retrieve information and be helpful.\n"
+        "2. For tools that MODIFY data (create_*, update_*, delete_*, complete_task), ASK FOR CONFIRMATION before executing unless the user explicitly requested the action.\n"
         "3. Be proactive in checking available information to give better recommendations.\n\n"
         
         "WORKING WITH ENTITIES:\n"
-        "1. Before creating or modifying any entity, first look up existing entities to identify relevant ones.\n"
-        "2. For tasks, first call list_goals to see which goals exist before associating them.\n"
-        "3. Don't make up or assume goal names - only use goals that actually exist in the system.\n"
-        "4. When information is incomplete, ask the user for clarification rather than making assumptions.\n"
+        "1. Tasks have different states (incomplete, completed, abandoned, missed) and priorities (low, medium, high, urgent).\n"
+        "2. Goals have hierarchical structure through the parent_goal_id field.\n"
+        "3. Tasks can be linked to multiple goals, and can depend on other tasks.\n"
+        "4. Always check if entities exist before attempting to create relationships between them.\n"
         "5. Present users with options from existing data whenever possible.\n\n"
         
         "WHEN CALLING TOOLS:\n"
@@ -134,10 +149,13 @@ async def chat_loop():
         "2. Omit optional parameters entirely if they don't have values instead of setting them to null.\n"
         "3. For required parameters, always provide appropriate values.\n"
         "4. Default values will be automatically applied for omitted optional parameters.\n"
-        "5. Example: Instead of {\"id\": \"task1\", \"name\": \"Task\", \"goals\": null}, use {\"id\": \"task1\", \"name\": \"Task\"}\n\n"
+        
+        "USING POSTGRESQL DATABASE:\n"
+        "1. All data is stored in a PostgreSQL database using SQLModel ORM.\n"
+        "2. The database schema includes Task, Goal, and Event tables.\n"
+        "3. Many-to-many relationships are implemented through link tables.\n\n"
         
         "When responding to users, provide helpful, **CONCISE** responses. After using a tool, summarize what you found in a natural way."
- 
             )
         }
     ]
@@ -199,7 +217,15 @@ async def chat_loop():
                 # Add a summary of tool results as a user message
                 tool_summary = "I've executed the tools you requested:\n\n"
                 for name, result in tool_results:
-                    tool_summary += f"Tool '{name}' returned: {json.dumps(result, default=str)}\n\n"
+                    # Handle SQLModel objects for JSON serialization
+                    if hasattr(result, "model_dump"):
+                        result_dict = result.model_dump()
+                    else:
+                        # Convert to dict using SQLModel's dict() method if available
+                        result_dict = result.dict() if hasattr(result, "dict") else result
+                    
+                    tool_summary += f"Tool '{name}' returned: {json.dumps(result_dict, default=str)}\n\n"
+                
                 tool_summary += "Please summarize these results in a helpful way."
                 
                 followup_history.append({"role": "user", "content": tool_summary})
@@ -251,6 +277,5 @@ def check_color_support():
 
 
 if __name__ == "__main__":
-    import asyncio
     check_color_support()
     asyncio.run(chat_loop())
