@@ -46,9 +46,11 @@ You have access to the following tools:
 
 If you need to use a tool to answer the user's request, follow these instructions *exactly*:
 1.  First, think step-by-step about whether you need to call a tool. You can use <think>...</think> blocks for your reasoning. These blocks will be ignored.
-2.  If you decide to call one or more tools, output *each* function call as a standard JSON object on its own line. The JSON object *must* have a "name" key and an "arguments" key.
-    Example of a line containing a function call:
+2.  If you decide to call one or more tools, output *each* function call as a standard JSON object on its own line. The JSON object *must* have a "name" key and an "arguments" key (if arguments are needed).
+    Example with arguments:
     {{"name": "tool_name", "arguments": {{"arg1": "value1", "arg2": "value2"}}}}
+    Example without arguments:
+    {{"name": "tool_name"}}
 3.  Do *not* include any other text, explanations, or narrative outside the JSON lines if you are making tool calls.
 4.  If you do not need to use a tool, respond to the user naturally without outputting any JSON tool calls.
 """.format(tool_description=tool_description)
@@ -71,34 +73,36 @@ def _parse_tool_calls_from_content(content: Optional[str]) -> List[Dict[str, Any
         if trimmed_line.startswith("{") and trimmed_line.endswith("}"):
             try:
                 parsed_json = json.loads(trimmed_line)
-                # Check if it looks like a valid tool call structure
-                if isinstance(parsed_json, dict) and "name" in parsed_json and "arguments" in parsed_json:
-                     # Ensure arguments is a dict, even if empty
-                     args = parsed_json.get("arguments")
-                     if args is None:
-                        args = {}
-                     elif not isinstance(args, dict):
-                         # Attempt to handle if arguments are accidentally stringified JSON
-                         try:
-                             args = json.loads(args) if isinstance(args, str) else args
-                             if not isinstance(args, dict): # Reset if still not a dict
+                # Check if it has a "name" key (required for tool calls)
+                if isinstance(parsed_json, dict) and "name" in parsed_json:
+                    # Handle the arguments - may be missing entirely
+                    args = {}
+                    if "arguments" in parsed_json:
+                        args = parsed_json["arguments"]
+                        # Handle if arguments are provided as a string
+                        if isinstance(args, str):
+                            try:
+                                args = json.loads(args)
+                                if not isinstance(args, dict):
+                                    args = {}
+                            except json.JSONDecodeError:
                                 args = {}
-                         except json.JSONDecodeError:
-                             args = {} # Give up if string is not valid JSON
-
-                     tool_call_id = f"call_{uuid.uuid4()}"
-                     tool_calls.append({
-                         "id": tool_call_id,
-                         "type": "function",
-                         "function": {
-                             "name": parsed_json["name"],
-                             # Arguments in the final litellm structure must be a JSON *string*
-                             "arguments": json.dumps(args) 
-                         }
-                     })
+                    
+                    # Generate a unique ID for this tool call
+                    tool_call_id = f"call_{uuid.uuid4()}"
+                    
+                    # Create the tool call structure
+                    tool_calls.append({
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": parsed_json["name"],
+                            # Arguments in the final litellm structure must be a JSON *string*
+                            "arguments": json.dumps(args) 
+                        }
+                    })
             except json.JSONDecodeError:
                 # Ignore lines that look like JSON but fail to parse
-                # Consider adding logging here if needed: logging.warning(...)
                 print(f"Warning: Failed to parse potential JSON tool call: {trimmed_line}") 
                 continue
                 
@@ -163,10 +167,16 @@ def completion(*args, **kwargs) -> litellm.ModelResponse:
         # Parse the response content for tool calls
         response_content = None
         if response.choices and response.choices[0].message:
-           response_content = response.choices[0].message.content
+            response_content = response.choices[0].message.content
 
+        # Debug output to see what we're parsing
+        print(f"Debug: Raw response content: {response_content}")
+            
         parsed_tool_calls = _parse_tool_calls_from_content(response_content)
 
+        # Debug output to check if we found any tool calls
+        print(f"Debug: Parsed tool calls: {parsed_tool_calls}")
+            
         # Construct the final response object
         if parsed_tool_calls:
             original_choice = response.choices[0] if response.choices else litellm.utils.Choices(finish_reason="stop", index=0, message=litellm.utils.Message(content=None, role='assistant'))
