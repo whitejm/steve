@@ -51,9 +51,8 @@ If you need to use a tool to answer the user's request, follow these instruction
     {{"name": "tool_name", "arguments": {{"arg1": "value1", "arg2": "value2"}}}}
     Example without arguments:
     {{"name": "tool_name"}}
-3.  DO NOT wrap your tool calls in code blocks with triple backticks. Just output the raw JSON objects.
-4.  Do *not* include any other text, explanations, or narrative outside the JSON lines if you are making tool calls.
-5.  If you do not need to use a tool, respond to the user naturally without outputting any JSON tool calls.
+3.  Do *not* include any other text, explanations, or narrative outside the JSON lines if you are making tool calls.
+4.  If you do not need to use a tool, respond to the user naturally without outputting any JSON tool calls.
 """.format(tool_description=tool_description)
     return instruction.strip()
 
@@ -109,6 +108,42 @@ def _parse_tool_calls_from_content(content: Optional[str]) -> List[Dict[str, Any
                 
     return tool_calls
 
+def _sanitize_messages_for_non_tool_model(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Remove tool_calls from messages for models that don't support tool calling.
+    Also convert tool responses to user messages with appropriate formatting.
+    """
+    sanitized_messages = []
+    
+    for msg in messages:
+        role = msg.get("role", "")
+        
+        # Skip tool messages completely (they'll be represented in assistant messages)
+        if role == "tool":
+            continue
+            
+        # For assistant messages, remove tool_calls and ensure content is not None
+        elif role == "assistant":
+            new_msg = {"role": "assistant"}
+            
+            # If this message had tool_calls, but no content, create a placeholder content
+            if msg.get("tool_calls") and not msg.get("content"):
+                new_msg["content"] = "I need to use a tool to help with this."
+            # Otherwise keep the original content
+            elif msg.get("content"):
+                new_msg["content"] = msg["content"]
+            # If somehow both content and tool_calls are None/empty, use a generic message
+            else:
+                new_msg["content"] = "I'm here to help."
+                
+            sanitized_messages.append(new_msg)
+            
+        # Keep user and system messages as is
+        else:
+            sanitized_messages.append(copy.deepcopy(msg))
+            
+    return sanitized_messages
+
 # ---- Main Completion Function ----
 
 def completion(*args, **kwargs) -> litellm.ModelResponse:
@@ -129,12 +164,12 @@ def completion(*args, **kwargs) -> litellm.ModelResponse:
     model = kwargs.get("model")
     messages = kwargs.get("messages")
     tools = kwargs.get("tools")
-    
+    # tool_choice = kwargs.get("tool_choice") # Captured but ignored in fallback
+
     # Ensure essential arguments are present
     if not model or not messages:
         return litellm.completion(*args, **kwargs)
 
-    # Check if the model supports native tool calling
     use_native_tools = litellm.supports_function_calling(model) and tools
 
     if use_native_tools:
@@ -147,43 +182,48 @@ def completion(*args, **kwargs) -> litellm.ModelResponse:
         # We need to inject the prompt and parse the output.
         print(f"Info: Using prompt engineering for tool support with model '{model}'.")
         
-        # Make a clean copy of kwargs without tool-related parameters
-        clean_kwargs = {}
-        for key, value in kwargs.items():
-            if key not in ["tools", "tool_choice"]:
-                clean_kwargs[key] = value
+        call_kwargs = copy.deepcopy(kwargs)
+        original_messages = call_kwargs["messages"]
         
-        # Copy the original messages
-        original_messages = copy.deepcopy(clean_kwargs.get("messages", []))
+        # Sanitize messages by removing tool_calls and tool messages
+        sanitized_messages = _sanitize_messages_for_non_tool_model(original_messages)
         
-        # Generate the tool prompt and add it to the messages
         tool_prompt = _generate_tool_prompt(tools)
-        modified_messages = original_messages.copy()
+        
+        # Add the tool prompt to the sanitized messages
+        modified_messages = copy.deepcopy(sanitized_messages)
         modified_messages.append({"role": "user", "content": tool_prompt})
-        clean_kwargs["messages"] = modified_messages
+        call_kwargs["messages"] = modified_messages
+        
+        if "tools" in call_kwargs:
+            del call_kwargs["tools"]
+        if "tool_choice" in call_kwargs:
+            print("Warning: 'tool_choice' is ignored when using prompt-engineered tools.")
+            del call_kwargs["tool_choice"]
 
-        # Call litellm without tool-related parameters
-        print(clean_kwargs)
-        response = litellm.completion(**clean_kwargs)
+        # Debug: Print what we're sending to LiteLLM
+        debug_messages = [f"{m.get('role')}: {m.get('content', '')[:50]}..." for m in modified_messages]
+        print(f"Debug: Sanitized messages being sent: {debug_messages}")
+
+        # Make the call to the underlying litellm.completion
+        response: litellm.ModelResponse = litellm.completion(*args, **call_kwargs)
 
         # Parse the response content for tool calls
         response_content = None
         if response.choices and response.choices[0].message:
             response_content = response.choices[0].message.content
 
-        # Debug output
+        # Debug output to see what we're parsing
         print(f"Debug: Raw response content: {response_content}")
             
         parsed_tool_calls = _parse_tool_calls_from_content(response_content)
+
+        # Debug output to check if we found any tool calls
         print(f"Debug: Parsed tool calls: {parsed_tool_calls}")
             
         # Construct the final response object
         if parsed_tool_calls:
-            original_choice = response.choices[0] if response.choices else litellm.utils.Choices(
-                finish_reason="stop", 
-                index=0, 
-                message=litellm.utils.Message(content=None, role='assistant')
-            )
+            original_choice = response.choices[0] if response.choices else litellm.utils.Choices(finish_reason="stop", index=0, message=litellm.utils.Message(content=None, role='assistant'))
             
             new_message = litellm.utils.Message(
                 content=None, 
