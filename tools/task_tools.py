@@ -1,6 +1,6 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from datetime import datetime, timedelta
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from sqlmodel import select, Session
 import uuid
 from dateutil.rrule import rrulestr
@@ -22,9 +22,23 @@ class CreateTaskParams(BaseModel):
     due: Optional[datetime] = Field(default=None, description="Deadline for the task")
     scheduling_notes: Optional[str] = Field(default=None, description="Notes about scheduling preferences")
     mark_missed_after_days_overdue: Optional[int] = Field(default=0, description="Days after which an overdue task is automatically marked missed (0 or None means never)")
-    goal_ids: Optional[List[int]] = Field(default=None, description="IDs of goals this task is associated with")
-    depends_on_task_ids: Optional[List[int]] = Field(default=None, description="IDs of tasks that must be completed before this one")
+    goal_ids: Optional[Union[List[int], int]] = Field(default=None, description="ID or list of IDs of goals this task is associated with")
+    depends_on_task_ids: Optional[Union[List[int], int]] = Field(default=None, description="ID or list of IDs of tasks that must be completed before this one")
     rrule: Optional[str] = Field(default=None, description="Recurrence rule for generating recurring instances (iCalendar RRULE format)")
+    
+    # Validator to convert single integer to list for goal_ids
+    @validator('goal_ids')
+    def validate_goal_ids(cls, v):
+        if v is not None and not isinstance(v, list):
+            return [v]
+        return v
+    
+    # Validator to convert single integer to list for depends_on_task_ids
+    @validator('depends_on_task_ids')
+    def validate_depends_on_task_ids(cls, v):
+        if v is not None and not isinstance(v, list):
+            return [v]
+        return v
 
 class UpdateTaskParams(BaseModel):
     id: int = Field(description="ID of the task to update")
@@ -39,12 +53,21 @@ class UpdateTaskParams(BaseModel):
     due: Optional[datetime] = Field(default=None, description="Updated deadline")
     scheduling_notes: Optional[str] = Field(default=None, description="Updated scheduling notes")
     mark_missed_after_days_overdue: Optional[int] = Field(default=None, description="Updated days until marked missed")
-    goal_ids: Optional[List[int]] = Field(default=None, description="Updated list of associated goal IDs")
-    add_goal_ids: Optional[List[int]] = Field(default=None, description="Goal IDs to add to this task")
-    remove_goal_ids: Optional[List[int]] = Field(default=None, description="Goal IDs to remove from this task")
-    depends_on_task_ids: Optional[List[int]] = Field(default=None, description="Updated list of prerequisite task IDs")
-    add_dependency_ids: Optional[List[int]] = Field(default=None, description="Task IDs to add as dependencies")
-    remove_dependency_ids: Optional[List[int]] = Field(default=None, description="Task IDs to remove as dependencies")
+    goal_ids: Optional[Union[List[int], int]] = Field(default=None, description="Complete replacement list of associated goal IDs")
+    add_goal_ids: Optional[Union[List[int], int]] = Field(default=None, description="Goal ID or IDs to add to this task")
+    remove_goal_ids: Optional[Union[List[int], int]] = Field(default=None, description="Goal ID or IDs to remove from this task")
+    depends_on_task_ids: Optional[Union[List[int], int]] = Field(default=None, description="Complete replacement list of prerequisite task IDs")
+    add_dependency_ids: Optional[Union[List[int], int]] = Field(default=None, description="Task ID or IDs to add as dependencies")
+    remove_dependency_ids: Optional[Union[List[int], int]] = Field(default=None, description="Task ID or IDs to remove as dependencies")
+    update_all_recurring_after: Optional[bool] = Field(default=False, description="Whether to update this task, its template (if it's an instance), and all future instances")
+    
+    # Validators to convert single integers to lists
+    @validator('goal_ids', 'add_goal_ids', 'remove_goal_ids', 'depends_on_task_ids', 
+               'add_dependency_ids', 'remove_dependency_ids')
+    def validate_id_lists(cls, v):
+        if v is not None and not isinstance(v, list):
+            return [v]
+        return v
 
 class GetTaskParams(BaseModel):
     id: int = Field(description="ID of the task to retrieve")
@@ -185,14 +208,46 @@ def update_task(id: int, name: Optional[str] = None, priority: Optional[TaskPrio
                 remove_goal_ids: Optional[List[int]] = None,
                 depends_on_task_ids: Optional[List[int]] = None,
                 add_dependency_ids: Optional[List[int]] = None,
-                remove_dependency_ids: Optional[List[int]] = None) -> Optional[Task]:
+                remove_dependency_ids: Optional[List[int]] = None,
+                update_all_recurring_after: bool = False) -> Optional[Task]:
     """Update an existing task"""
     with Session(engine) as session:
         task = session.get(Task, id)
         if not task:
             return None
         
-        # Update basic fields if provided
+        # Determine if this is a recurring task and identify the template and instances
+        template_task = None
+        future_instances = []
+        
+        # If this is a recurrence instance, get its template
+        if task.rrule_template_id is not None:
+            template_task = session.get(Task, task.rrule_template_id)
+        
+        # If this is a template task, get its instances
+        elif task.rrule is not None:
+            template_task = task
+            
+        # If we're updating recurring tasks and we have a template
+        if update_all_recurring_after and template_task is not None:
+            # If task is an instance, find all instances with dates after this one
+            if task.rrule_template_id is not None and task.scheduled_at is not None:
+                instances_query = select(Task).where(
+                    Task.rrule_template_id == template_task.id,
+                    Task.scheduled_at >= task.scheduled_at,
+                    Task.id != task.id  # Exclude the current task
+                )
+                future_instances = list(session.exec(instances_query).all())
+            # If task is a template, find all instances
+            elif task.rrule is not None:
+                now = datetime.now()
+                instances_query = select(Task).where(
+                    Task.rrule_template_id == task.id,
+                    Task.scheduled_at >= now
+                )
+                future_instances = list(session.exec(instances_query).all())
+        
+        # Update basic fields if provided on the current task
         if name is not None:
             task.name = name
         if priority is not None:
@@ -309,6 +364,65 @@ def update_task(id: int, name: Optional[str] = None, priority: Optional[TaskPrio
                 dep = session.exec(dep_query).first()
                 if dep:
                     session.delete(dep)
+        
+        # Update the template task if needed
+        if update_all_recurring_after and template_task is not None and template_task.id != task.id:
+            # Only update specific fields that make sense to propagate
+            if name is not None:
+                template_task.name = name
+            if priority is not None:
+                template_task.priority = priority
+            if estimated_completion_time_minutes is not None:
+                template_task.estimated_completion_time_minutes = estimated_completion_time_minutes
+            if notes is not None:
+                template_task.notes = notes
+            if mark_missed_after_days_overdue is not None:
+                template_task.mark_missed_after_days_overdue = mark_missed_after_days_overdue
+            
+            # Handle goal associations for the template
+            if goal_ids is not None:
+                # Remove existing links
+                links_query = select(TaskGoalLink).where(TaskGoalLink.task_id == template_task.id)
+                existing_links = session.exec(links_query).all()
+                for link in existing_links:
+                    session.delete(link)
+                
+                # Add new links
+                for goal_id in goal_ids:
+                    link = TaskGoalLink(task_id=template_task.id, goal_id=goal_id)
+                    session.add(link)
+            
+            session.add(template_task)
+        
+        # Update future instances if needed
+        if update_all_recurring_after and future_instances:
+            for instance in future_instances:
+                # Only update specific fields that make sense to propagate
+                if name is not None:
+                    instance.name = name
+                if priority is not None:
+                    instance.priority = priority
+                if estimated_completion_time_minutes is not None:
+                    instance.estimated_completion_time_minutes = estimated_completion_time_minutes
+                if notes is not None:
+                    instance.notes = notes
+                if mark_missed_after_days_overdue is not None:
+                    instance.mark_missed_after_days_overdue = mark_missed_after_days_overdue
+                
+                # Handle goal associations for each instance
+                if goal_ids is not None:
+                    # Remove existing links
+                    links_query = select(TaskGoalLink).where(TaskGoalLink.task_id == instance.id)
+                    existing_links = session.exec(links_query).all()
+                    for link in existing_links:
+                        session.delete(link)
+                    
+                    # Add new links
+                    for goal_id in goal_ids:
+                        link = TaskGoalLink(task_id=instance.id, goal_id=goal_id)
+                        session.add(link)
+                
+                session.add(instance)
         
         session.commit()
         session.refresh(task)

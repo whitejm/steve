@@ -51,8 +51,9 @@ If you need to use a tool to answer the user's request, follow these instruction
     {{"name": "tool_name", "arguments": {{"arg1": "value1", "arg2": "value2"}}}}
     Example without arguments:
     {{"name": "tool_name"}}
-3.  Do *not* include any other text, explanations, or narrative outside the JSON lines if you are making tool calls.
-4.  If you do not need to use a tool, respond to the user naturally without outputting any JSON tool calls.
+3.  DO NOT wrap your tool calls in code blocks with triple backticks. Just output the raw JSON objects.
+4.  Do *not* include any other text, explanations, or narrative outside the JSON lines if you are making tool calls.
+5.  If you do not need to use a tool, respond to the user naturally without outputting any JSON tool calls.
 """.format(tool_description=tool_description)
     return instruction.strip()
 
@@ -128,12 +129,12 @@ def completion(*args, **kwargs) -> litellm.ModelResponse:
     model = kwargs.get("model")
     messages = kwargs.get("messages")
     tools = kwargs.get("tools")
-    # tool_choice = kwargs.get("tool_choice") # Captured but ignored in fallback
-
+    
     # Ensure essential arguments are present
     if not model or not messages:
         return litellm.completion(*args, **kwargs)
 
+    # Check if the model supports native tool calling
     use_native_tools = litellm.supports_function_calling(model) and tools
 
     if use_native_tools:
@@ -146,40 +147,43 @@ def completion(*args, **kwargs) -> litellm.ModelResponse:
         # We need to inject the prompt and parse the output.
         print(f"Info: Using prompt engineering for tool support with model '{model}'.")
         
-        call_kwargs = copy.deepcopy(kwargs)
-        original_messages = call_kwargs["messages"]
+        # Make a clean copy of kwargs without tool-related parameters
+        clean_kwargs = {}
+        for key, value in kwargs.items():
+            if key not in ["tools", "tool_choice"]:
+                clean_kwargs[key] = value
         
+        # Copy the original messages
+        original_messages = copy.deepcopy(clean_kwargs.get("messages", []))
+        
+        # Generate the tool prompt and add it to the messages
         tool_prompt = _generate_tool_prompt(tools)
-        
-        modified_messages = copy.deepcopy(original_messages)
+        modified_messages = original_messages.copy()
         modified_messages.append({"role": "user", "content": tool_prompt})
-        call_kwargs["messages"] = modified_messages
-        
-        if "tools" in call_kwargs:
-            del call_kwargs["tools"]
-        if "tool_choice" in call_kwargs:
-            print("Warning: 'tool_choice' is ignored when using prompt-engineered tools.")
-            del call_kwargs["tool_choice"]
+        clean_kwargs["messages"] = modified_messages
 
-        # Make the call to the underlying litellm.completion
-        response: litellm.ModelResponse = litellm.completion(*args, **call_kwargs)
+        # Call litellm without tool-related parameters
+        print(clean_kwargs)
+        response = litellm.completion(**clean_kwargs)
 
         # Parse the response content for tool calls
         response_content = None
         if response.choices and response.choices[0].message:
             response_content = response.choices[0].message.content
 
-        # Debug output to see what we're parsing
+        # Debug output
         print(f"Debug: Raw response content: {response_content}")
             
         parsed_tool_calls = _parse_tool_calls_from_content(response_content)
-
-        # Debug output to check if we found any tool calls
         print(f"Debug: Parsed tool calls: {parsed_tool_calls}")
             
         # Construct the final response object
         if parsed_tool_calls:
-            original_choice = response.choices[0] if response.choices else litellm.utils.Choices(finish_reason="stop", index=0, message=litellm.utils.Message(content=None, role='assistant'))
+            original_choice = response.choices[0] if response.choices else litellm.utils.Choices(
+                finish_reason="stop", 
+                index=0, 
+                message=litellm.utils.Message(content=None, role='assistant')
+            )
             
             new_message = litellm.utils.Message(
                 content=None, 

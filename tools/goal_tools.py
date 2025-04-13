@@ -1,6 +1,6 @@
-from typing import Optional, List
+from typing import Optional, List, Union
 from datetime import date
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from sqlmodel import select, Session
 
 from database import engine

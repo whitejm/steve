@@ -22,6 +22,11 @@ class GoalState(str, Enum):
     abandoned = "abandoned"
     ongoing = "ongoing"
 
+class NoteType(str, Enum):
+    user_preference = "user_preference"
+    reference = "reference"
+    general = "general"
+
 # Association tables for many-to-many relationships
 class TaskGoalLink(SQLModel, table=True):
     task_id: Optional[int] = Field(default=None, foreign_key="task.id", primary_key=True)
@@ -91,3 +96,13 @@ class Event(SQLModel, table=True):
     duration_minutes: int
     notes: Optional[str] = None
     location: Optional[str] = None
+
+# New Note model for user preferences and information
+class Note(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(description="Descriptive title for the note")
+    content: str = Field(description="The actual content of the note")
+    note_type: NoteType = Field(default=NoteType.general, description="Type of note for categorization")
+    is_system_prompt: bool = Field(default=False, description="Whether to include this note in the system prompt")
+    created_at: datetime = Field(default_factory=datetime.now, description="When the note was created")
+    updated_at: datetime = Field(default_factory=datetime.now, description="When the note was last updated")
