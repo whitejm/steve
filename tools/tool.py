@@ -1,13 +1,13 @@
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Type
-from functools import wraps
 from pydantic import BaseModel, create_model
 
 
 class Tool:
     """Represents an operation with parameter validation"""
     
-    def __init__(self, name: str, function: Callable, parameter_model: Type[BaseModel], description: Optional[str] = None):
+    def __init__(self, name: str, function: Callable, parameter_model: Type[BaseModel], 
+                 description: Optional[str] = None, requires_confirmation: bool = False):
         """
         Initialize a new tool
         
@@ -16,11 +16,13 @@ class Tool:
             function: The function to execute
             parameter_model: Pydantic model for parameter validation
             description: Optional description of the tool
+            requires_confirmation: Whether this tool requires user confirmation before execution
         """
         self.name = name
         self.function = function
         self.parameter_model = parameter_model
         self.description = description or function.__doc__ or ""
+        self._requires_confirmation = requires_confirmation
         
         # Validate that function signature matches parameter model
         self._validate_function_signature()
@@ -95,6 +97,16 @@ class Tool:
         """Validate and execute the function"""
         validated_params = self.parameter_model(**kwargs)
         return self.function(**validated_params.model_dump())
+    
+    @property
+    def requires_confirmation(self) -> bool:
+        """Whether this tool requires user confirmation before execution"""
+        return self._requires_confirmation
+    
+    @requires_confirmation.setter
+    def requires_confirmation(self, value: bool) -> None:
+        """Set whether this tool requires confirmation before execution"""
+        self._requires_confirmation = value
 
 
 class ToolSet:
@@ -117,25 +129,3 @@ class ToolSet:
     def get_tool_by_name(self, name: str) -> Optional[Tool]:
         """Get a tool by name"""
         return self._tool_dict.get(name)
-
-
-def tool(parameter_model: Type[BaseModel]):
-    """
-    Decorator for creating tools
-    
-    Args:
-        parameter_model: Pydantic model for parameter validation
-    
-    Returns:
-        Decorated function
-    """
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-        
-        # Attach metadata for tool creation
-        wrapper.tool_parameter_model = parameter_model
-        wrapper.is_tool = True
-        return wrapper
-    return decorator
